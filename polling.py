@@ -1,134 +1,103 @@
 import RPi.GPIO as GPIO
 import time
 
-# Kasutame BCM nummerdust (veendu, et see vastab sinu juhtmetele)
-# Kui kasutad füüsilisi viigunumbreid, muuda see GPIO.BOARD-iks
+# Kasutame BCM nummerdust (GPIO numbrid)
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 
-# --- Seadistused ---
-# LED pinid (BCM numbrid)
-CAR_RED = 2
-CAR_YELLOW = 3
-CAR_GREEN = 4
-PED_RED = 20
-PED_GREEN = 21
-WHITE = 27
-BUTTON = 26
+AUTO_PUNANE = 2
+AUTO_KOLLANE = 3
+AUTO_ROHELINE = 4
+JALA_PUNANE = 20
+JALA_ROHELINE = 21
+VALGE = 27
+NUPP = 26
 
-# LEDid -> OUTPUT
-led_pins = [CAR_RED, CAR_YELLOW, CAR_GREEN, PED_RED, PED_GREEN, WHITE]
-GPIO.setup(led_pins, GPIO.OUT)
+tulid = [AUTO_PUNANE, AUTO_KOLLANE, AUTO_ROHELINE, JALA_PUNANE, JALA_ROHELINE, VALGE]
+GPIO.setup(tulid, GPIO.OUT)
 
-# Nupp -> INPUT (pull up takistiga: vaikimisi HIGH, vajutades LOW)
-GPIO.setup(BUTTON, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+# Nupp sisend sisseehitatud pull-up takistiga
+GPIO.setup(NUPP, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-# --- Algolekud ---
-GPIO.output(CAR_RED, True)     # Alustame punasega
-GPIO.output(CAR_YELLOW, False)
-GPIO.output(CAR_GREEN, False)
-GPIO.output(PED_RED, True)     # Jalakäija punane
-GPIO.output(PED_GREEN, False)
-GPIO.output(WHITE, False)
+# Algolekud
+GPIO.output(AUTO_PUNANE, True) 
+GPIO.output(JALA_PUNANE, True)  
+GPIO.output(VALGE, False)     
 
-# Muutujad oleku hoidmiseks
-ped_wait = False
-last_button_state = GPIO.input(BUTTON)
+# Jalakäija ootamise muutujad
+jalakaija_ootab = False
+eelmine_nupu_seisund = GPIO.input(NUPP)
 
-# --- Abifunktsioonid ---
+def kontrolli_nuppu():
+    """Kontrollib nupu olekut ja märgib, et jalakäija tahab üle minna."""
+    global jalakaija_ootab, eelmine_nupu_seisund
+    praegune = GPIO.input(NUPP)
 
-def check_button():
-    """Kontrollib nupu olekut ja uuendab ped_wait muutujat."""
-    global ped_wait, last_button_state
-    current_state = GPIO.input(BUTTON)
+    # Tuvastame nupuvajutuse (HIGH, mis läheb LOW)
+    if eelmine_nupu_seisund == GPIO.HIGH and praegune == GPIO.LOW:
+        if not jalakaija_ootab:
+            jalakaija_ootab = True
+            GPIO.output(VALGE, True)
+            print("Nupp vajutatud")
 
-    # Tuvastame "Falling edge" (HIGH -> LOW) ehk nupuvajutuse hetke
-    if last_button_state == GPIO.HIGH and current_state == GPIO.LOW:
-        if not ped_wait: # Ainult siis, kui juba ei oota
-            ped_wait = True
-            GPIO.output(WHITE, True) # Valge näitab, et soov on salvestatud
-            print("NUPP VAJUTATUD -> Soov salvestatud, ootan järgmist tsüklit.")
-    
-    last_button_state = current_state
+    eelmine_nupu_seisund = praegune
 
-def wait_and_poll(duration):
-    """Ootab antud aja (sekundites), kontrollides pidevalt nuppu."""
-    # Jagame ooteaja väikesteks 0.05s juppideks, et nuppu tihti kontrollida
-    steps = int(duration / 0.05)
-    for _ in range(steps):
-        check_button()
+
+def oota_ja_kontrolli(sekundid):
+    """Ootab määratud aja, kontrollides samal ajal nuppu."""
+    sammud = int(sekundid / 0.05)
+    for _ in range(sammud):
+        kontrolli_nuppu()
         time.sleep(0.05)
 
-# --- Põhiprogramm ---
 
 try:
-    print("Valgusfoor käivitatud! (Ctrl+C lõpetamiseks)")
+    print("Valgusfoor käivitatud")
 
     while True:
-        # ==========================================
-        # 🔴 1. AUTO PUNANE (5s)
-        # ==========================================
-        GPIO.output(CAR_RED, True)
 
-        # KONTROLL: Kas jalakäija ootab? 
-        # See juhtub AINULT punase tsükli alguses.
-        if ped_wait:
-            # Vahetame jalakäija tuled
-            GPIO.output(PED_RED, False)
-            GPIO.output(PED_GREEN, True)
-            
-            # Soov täidetud -> kustutame valge ja nullime ootejärjekorra
-            GPIO.output(WHITE, False)
-            ped_wait = False 
-            print("Jalakäija: ROHELINE")
+        # Auto foor punane
+        GPIO.output(AUTO_PUNANE, True)
+        GPIO.output(AUTO_KOLLANE, False)
+        GPIO.output(AUTO_ROHELINE, False)
+
+        if jalakaija_ootab:
+            GPIO.output(JALA_PUNANE, False)
+            GPIO.output(JALA_ROHELINE, True)
+            GPIO.output(VALGE, False)
+            jalakaija_ootab = False
+            print("Jalakäija ROHELINE")
         else:
-            # Kui keegi ei oota, on jalakäijal punane
-            GPIO.output(PED_GREEN, False)
-            GPIO.output(PED_RED, True)
+            GPIO.output(JALA_ROHELINE, False)
+            GPIO.output(JALA_PUNANE, True)
 
-        # Ootame 5 sekundit (samal ajal nuppu kontrollides)
-        # Kui siin vajutatakse nuppu, läheb ped_wait True-ks ja White põlema,
-        # aga jalakäija tuli ei muutu roheliseks enne järgmist ringi.
-        wait_and_poll(5)
+        oota_ja_kontrolli(5)
 
-        # Punase tsükli lõpp -> Jalakäija kindlasti punaseks tagasi
-        GPIO.output(PED_GREEN, False)
-        GPIO.output(PED_RED, True)
-        
-        # NB! Me EI nulli siin ped_wait muutujat ega WHITE tuld!
-        # See tagabki, et kui nuppu vajutati punase ajal, jääb valge põlema 
-        # kuni tsükkel teeb ringi ära ja jõuab uuesti algusesse.
+        # Punase lõpus jalakäija jälle punaseks
+        GPIO.output(JALA_ROHELINE, False)
+        GPIO.output(JALA_PUNANE, True)
+        GPIO.output(AUTO_PUNANE, False)
 
-        GPIO.output(CAR_RED, False)
+        # Auto foor kollane
+        GPIO.output(AUTO_KOLLANE, True)
+        oota_ja_kontrolli(1)
+        GPIO.output(AUTO_KOLLANE, False)
 
-        # ==========================================
-        # 🟡 2. AUTO KOLLANE (1s)
-        # ==========================================
-        GPIO.output(CAR_YELLOW, True)
-        wait_and_poll(1)
-        GPIO.output(CAR_YELLOW, False)
+        # Auto foor roheline
+        GPIO.output(AUTO_ROHELINE, True)
+        oota_ja_kontrolli(5)
+        GPIO.output(AUTO_ROHELINE, False)
 
-        # ==========================================
-        # 🟢 3. AUTO ROHELINE (5s)
-        # ==========================================
-        GPIO.output(CAR_GREEN, True)
-        wait_and_poll(5)
-        GPIO.output(CAR_GREEN, False)
-
-        # ==========================================
-        # 🟡 4. AUTO KOLLANE VILGUB (3x)
-        # ==========================================
-        # PDF ütles: vilgub 2s jooksul 3 korda. 
-        # Teeme tsükli, aga kasutame ka siin poll'imist
+        # Kollane auto foor vilgub 3 korda
         for _ in range(3):
-            GPIO.output(CAR_YELLOW, True)
-            wait_and_poll(0.33) # ca 1/3 sekundit sees
-            GPIO.output(CAR_YELLOW, False)
-            wait_and_poll(0.33) # ca 1/3 sekundit väljas
+            GPIO.output(AUTO_KOLLANE, True)
+            oota_ja_kontrolli(0.33)
+            GPIO.output(AUTO_KOLLANE, False)
+            oota_ja_kontrolli(0.33)
 
 except KeyboardInterrupt:
-    print("\nProgrammi peatamine...")
+    print("\n Programm peatatud")
 
 finally:
     GPIO.cleanup()
-    print("GPIO puhastatud. Head aega!")
+    print("GPIO puhastatud")
